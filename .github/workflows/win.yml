@@ -114,30 +114,125 @@ jobs:
           GYP_MSVS_VERSION: 2022
         run: |
           cd %TBUILD%
+          echo "Building libraries and dependencies..."
           %REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent
+          
+          echo "Libraries build completed. Checking Qt installation..."
+          if exist "%TBUILD%\Libraries\qt*" (
+            echo Qt libraries found:
+            dir /b "%TBUILD%\Libraries\qt*"
+          ) else (
+            echo WARNING: No Qt libraries found in %TBUILD%\Libraries\
+            echo Available libraries:
+            dir /b "%TBUILD%\Libraries\" 2>nul || echo No Libraries directory found
+          )
+
+      - name: Verify dependencies.
+        run: |
+          echo "Verifying build dependencies..."
+          cd %TBUILD%
+          
+          echo "Checking Libraries directory:"
+          if exist "Libraries" (
+            dir /b Libraries
+          ) else (
+            echo ERROR: Libraries directory not found!
+            exit /b 1
+          )
+          
+          echo "Checking ThirdParty directory:"
+          if exist "ThirdParty" (
+            dir /b ThirdParty
+          ) else (
+            echo ERROR: ThirdParty directory not found!
+            exit /b 1
+          )
 
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'
         run: |
           cd %TBUILD%\%REPO_NAME%\Telegram
-
-          call configure.bat ^ 
-          -G "Visual Studio 17 2022" ^ 
-          -A x64 ^ 
-          -D TDESKTOP_API_TEST=ON ^ 
-          -D CMAKE_CONFIGURATION_TYPES=Release ^ 
-          -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF ^ 
+          
+          echo "Starting Telegram Desktop configuration..."
+          
+          call configure.bat x64 ^
+          -D TDESKTOP_API_TEST=ON ^
+          -D CMAKE_CONFIGURATION_TYPES=Release ^
+          -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF ^
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF
-
+          
+          if errorlevel 1 (
+            echo "Configuration failed with error level %errorlevel%"
+            echo "Checking for common issues..."
+            
+            if not exist "..\out" (
+              echo "Output directory was not created"
+            ) else (
+              echo "Output directory exists, listing contents:"
+              dir ..\out
+            )
+            
+            exit /b 1
+          )
+          
+          echo "Configuration successful. Starting build..."
           cmake --build ..\out --config Release --parallel
+          
+          if errorlevel 1 (
+            echo "Build failed with error level %errorlevel%"
+            exit /b 1
+          )
+          
+          echo "Build completed successfully."
+
+      - name: Verify build output.
+        if: env.ONLY_CACHE == 'false'
+        run: |
+          set OUT=%TBUILD%\%REPO_NAME%\out\Release
+          echo "Checking build output in %OUT%"
+          
+          if exist "%OUT%\Telegram.exe" (
+            echo "Telegram.exe found successfully"
+            dir "%OUT%\Telegram.exe"
+          ) else (
+            echo "ERROR: Telegram.exe not found!"
+            echo "Contents of output directory:"
+            dir "%OUT%" 2>nul || echo "Output directory does not exist"
+            exit /b 1
+          )
+          
+          if exist "%OUT%\Updater.exe" (
+            echo "Updater.exe found successfully"
+            dir "%OUT%\Updater.exe"
+          ) else (
+            echo "WARNING: Updater.exe not found"
+          )
 
       - name: Move artifact.
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
           set OUT=%TBUILD%\%REPO_NAME%\out\Release
+          echo "Preparing artifacts from %OUT%"
+          
           mkdir artifact
-          move %OUT%\Telegram.exe artifact/
-          move %OUT%\Updater.exe artifact/
+          
+          if exist "%OUT%\Telegram.exe" (
+            echo "Moving Telegram.exe..."
+            move "%OUT%\Telegram.exe" artifact\
+          ) else (
+            echo "ERROR: Telegram.exe not found for artifact creation"
+            exit /b 1
+          )
+          
+          if exist "%OUT%\Updater.exe" (
+            echo "Moving Updater.exe..."
+            move "%OUT%\Updater.exe" artifact\
+          ) else (
+            echo "WARNING: Updater.exe not found, skipping"
+          )
+          
+          echo "Artifact contents:"
+          dir artifact
 
       - uses: actions/upload-artifact@v4
         name: Upload artifact.
